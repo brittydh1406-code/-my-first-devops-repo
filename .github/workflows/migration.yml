@@ -54,8 +54,11 @@ jobs:
               work_mem to '12MB';
           LOADEOF
 
-          # Ejecutamos pgloader usando el ID de la red (que ya conoces)
-          docker run --rm --network f3b260db7b78 -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
+          # Buscamos el ID de la red actual dinámicamente
+          NETWORK_ID=$(docker network ls --filter name=mattermost_network -q | head -n 1)
+          echo "Using network ID: $NETWORK_ID"
+          
+          docker run --rm --network "$NETWORK_ID" -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
