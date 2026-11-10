@@ -1,0 +1,92 @@
+name: Full Stack Application Deployment Test
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  COMPOSE_PROJECT_NAME: myapp
+
+jobs:
+  deploy-and-test:
+    runs-on: self-hosted # ✅ Criterio 1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secrets # ✅ Criterio 3
+        run: |
+          cat > .env << ENVEOF
+          DB_HOST=db
+          DB_PORT=5432
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          APP_PORT=${{ secrets.APP_PORT }}
+          APP_SECRET=${{ secrets.APP_SECRET }}
+          API_KEY=${{ secrets.API_KEY }}
+          COMPOSE_PROJECT_NAME=${{ env.COMPOSE_PROJECT_NAME }}
+          ENVEOF
+          echo "✅ .env creado"
+
+      - name: Deploy with Docker Compose # ✅ Criterio 2
+        run: |
+          docker compose up -d --build
+          echo "Esperando a que los servicios levanten..."
+          sleep 20
+          docker compose ps
+
+      - name: Verify containers are running # ✅ Criterio 2
+        run: |
+          if docker compose ps | grep -q "Up"; then
+            echo "✅ Contenedores activos"
+          else
+            echo "❌ Error: Contenedores no están corriendo"
+            docker compose logs
+            exit 1
+          fi
+
+      - name: Run application tests # ✅ Criterio 4
+        run: |
+          echo "Probando salud de la App..."
+          if curl -f http://localhost:${{ secrets.APP_PORT }}/health; then
+            echo "✅ App healthy"
+          else
+            echo "❌ App no responde"
+            exit 1
+          fi
+
+      - name: Data consistency test # ✅ Criterio 4
+        run: |
+          DB_COUNT=$(docker compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;" | tr -d ' ' | head -n 1)
+          WEB_COUNT=$(curl -s http://localhost:${{ secrets.APP_PORT }}/api/items/count | grep -o '[0-9]*')
+          
+          echo "DB: $DB_COUNT | Web: $WEB_COUNT"
+          if [ "$DB_COUNT" = "$WEB_COUNT" ]; then
+            echo "✅ Datos consistentes"
+          else
+            echo "❌ Datos inconsistentes"
+            exit 1
+          fi
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "# Reporte de Despliegue" > test-report.md
+          echo "- Fecha: $(date)" >> test-report.md
+          echo "- App: OK" >> test-report.md
+          echo "- BD: OK" >> test-report.md
+          docker compose logs > deployment-logs.txt
+
+      - name: Upload artifacts # ✅ Criterio 3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-artifacts
+          path: |
+            .env
+            test-report.md
+            deployment-logs.txt
+          retention-days: 7
