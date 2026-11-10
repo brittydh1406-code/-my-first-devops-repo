@@ -29,7 +29,8 @@ jobs:
         run: |
           echo "Creating backup..."
           BACKUP_NAME="mattermost_mysql_backup_${{ github.run_id }}.sql"
-          docker exec mattermost-mysql mysqldump -u root -prootpassword mattermost > $BACKUP_NAME
+          # Usando secreto y ocultando la contraseña del log con :
+          docker exec mattermost-mysql mysqldump -u root -p"${{ secrets.DB_MYSQL_ROOT_PASSWORD }}" mattermost > $BACKUP_NAME
           echo "Backup saved as $BACKUP_NAME"
 
       - name: Start Target PostgreSQL
@@ -42,12 +43,12 @@ jobs:
       - name: Run pgloader Migration
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          # Usamos la imagen oficial de pgloader para Mattermost
+          # Usamos la imagen oficial de pgloader para Mattermost con Secrets
           docker run --rm --network legacy_mattermost_network mattermost/mattermost-pgloader:latest pgloader \
             --with "include drop, create tables, create indexes, reset sequences" \
             --set "maintenance work_mem to '128MB', regular work_mem to '128MB'" \
-            mysql://root:rootpassword@mattermost-mysql/mattermost \
-            postgresql://mmuser:password@mattermost-postgres/mattermost
+            mysql://root:"${{ secrets.DB_MYSQL_ROOT_PASSWORD }}"@mattermost-mysql/mattermost \
+            postgresql://mmuser:"${{ secrets.DB_POSTGRES_PASSWORD }}"@mattermost-postgres/mattermost
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
