@@ -13,7 +13,7 @@ services:
     depends_on:
       - mattermost-mysql
     networks:
-      - mattermost_network
+      - mattermost_net
 
   mattermost-mysql:
     image: mysql:8.0
@@ -23,15 +23,14 @@ services:
       - MYSQL_DATABASE=mattermost
       - MYSQL_USER=mmuser
       - MYSQL_PASSWORD=password
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_general_ci"]
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
-      - mattermost_network
+      - mattermost_net
 
 networks:
-  mattermost_network:
-    driver: bridge
+  mattermost_net:
+    name: mattermost_net
 
 volumes:
   mattermost_data:

@@ -27,61 +27,46 @@ jobs:
       - name: Backup Legacy MySQL
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          echo "Creating backup..."
-          BACKUP_NAME="mattermost_mysql_backup_${{ github.run_id }}.sql"
-          docker exec mattermost-mysql mysqldump -u root -p"${{ secrets.DB_MYSQL_ROOT_PASSWORD }}" mattermost > $BACKUP_NAME
-          echo "Backup saved as $BACKUP_NAME"
+          docker exec mattermost-mysql mysqldump -u root -p"${{ secrets.DB_MYSQL_ROOT_PASSWORD }}" mattermost > mattermost_mysql_backup_${{ github.run_id }}.sql
 
       - name: Start Target PostgreSQL
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          # Levantamos postgres
           docker compose -f docker-compose.prod.yml up -d mattermost-postgres
-          echo "Waiting for PostgreSQL..."
           sleep 15
 
-      - name: Run pgloader Migration (with config file)
+      - name: Run pgloader Migration
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          # GENERAMOS EL ARCHIVO .load USANDO LOS PUERTOS EXPUESTOS (127.0.0.1)
           cat > migration.load << LOADEOF
           LOAD DATABASE
-            FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@127.0.0.1:3306/mattermost
-            INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@127.0.0.1:5432/mattermost
-
+            FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
+            INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres:5432/mattermost
           WITH include drop, create tables, create indexes, reset sequences,
                workers = 4, concurrency = 1
-
           SET maintenance_work_mem to '128MB',
               work_mem to '12MB';
           LOADEOF
 
-          # Usamos network host, que en WSL funciona perfecto para conectar al 127.0.0.1
-          docker run --rm --network host -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
+          # Usamos la red mattermost_net que definimos en los compose
+          docker run --rm --network mattermost_net -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
           touch $HOME/.mattermost_migration_completed
-          echo "Flag file created."
 
       - name: Stop Legacy Stack
-        run: |
-          echo "Stopping legacy environment..."
-          docker compose -f legacy/docker-compose.yml down
+        run: docker compose -f legacy/docker-compose.yml down
 
       - name: Deploy Upgraded Stack
-        run: |
-          echo "Launching Upgraded Mattermost Stack..."
-          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+        run: docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
       - name: Run Health Checks
         run: |
-          echo "Waiting for app to be ready..."
           sleep 20
           if curl -f http://localhost:8065/api/v4/system/ping; then
             echo "✅ Mattermost upgraded successfully and running on Postgres!"
           else
-            echo "❌ Health check failed."
             exit 1
           fi
