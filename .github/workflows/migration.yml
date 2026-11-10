@@ -42,7 +42,7 @@ jobs:
       - name: Run pgloader Migration (with config file)
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          # 1. Generamos el archivo de configuración .load usando los nombres de servicio de Docker
+          # Generamos el archivo .load
           cat > migration.load << LOADEOF
           LOAD DATABASE
             FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
@@ -55,8 +55,7 @@ jobs:
               work_mem to '12MB';
           LOADEOF
 
-          # 2. Ejecutamos pgloader conectándolo a la red donde están los contenedores de las BD
-          # El nombre de la red suele ser el nombre de la carpeta + _mattermost_network
+          # Ejecutamos pgloader en la red correcta (la que acabas de encontrar)
           docker run --rm --network -my-first-devops-repo_mattermost_network -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
 
       - name: Mark Migration as Completed
