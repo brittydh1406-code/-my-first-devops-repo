@@ -54,6 +54,7 @@ jobs:
               work_mem to '12MB';
           LOADEOF
 
+          # Ejecutamos pgloader usando el ID de la red (que ya conoces)
           docker run --rm --network f3b260db7b78 -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
 
       - name: Mark Migration as Completed
@@ -62,7 +63,6 @@ jobs:
           touch $HOME/.mattermost_migration_completed
           echo "Flag file created."
 
-      # PASO NUEVO: Apagar entorno viejo
       - name: Stop Legacy Stack
         run: |
           echo "Stopping legacy environment..."
