@@ -1,0 +1,38 @@
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:9.5
+    container_name: mattermost
+    ports:
+      - "8065:8065"
+    environment:
+      - MM_SQLSETTINGS_DRIVERNAME=mysql
+      - MM_SQLSETTINGS_DATASOURCE=mmuser:password@tcp(mattermost-mysql:3306)/mattermost?charset=utf8mb4,utf8&readTimeout=30s&writeTimeout=30s
+      - MM_SERVICESETTINGS_SITEURL=http://localhost:8065
+    volumes:
+      - mattermost_data:/mattermost/data
+    depends_on:
+      - mattermost-mysql
+    networks:
+      - mattermost_network
+
+  mattermost-mysql:
+    image: mysql:8.0
+    container_name: mattermost-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=mattermost
+      - MYSQL_USER=mmuser
+      - MYSQL_PASSWORD=password
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_general_ci"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - mattermost_network
+
+networks:
+  mattermost_network:
+    driver: bridge
+
+volumes:
+  mattermost_data:
+  mysql_data:
