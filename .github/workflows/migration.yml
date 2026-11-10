@@ -42,7 +42,6 @@ jobs:
       - name: Run pgloader Migration (with config file)
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          # Generamos el archivo .load
           cat > migration.load << LOADEOF
           LOAD DATABASE
             FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
@@ -55,7 +54,6 @@ jobs:
               work_mem to '12MB';
           LOADEOF
 
-          # Ejecutamos pgloader usando el ID de la red (evita problemas con nombres)
           docker run --rm --network f3b260db7b78 -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
 
       - name: Mark Migration as Completed
@@ -63,6 +61,12 @@ jobs:
         run: |
           touch $HOME/.mattermost_migration_completed
           echo "Flag file created."
+
+      # PASO NUEVO: Apagar entorno viejo
+      - name: Stop Legacy Stack
+        run: |
+          echo "Stopping legacy environment..."
+          docker compose -f legacy/docker-compose.yml down
 
       - name: Deploy Upgraded Stack
         run: |
