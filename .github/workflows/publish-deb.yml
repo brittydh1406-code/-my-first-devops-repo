@@ -53,16 +53,16 @@ jobs:
           EOF
           dpkg-deb --build --root-owner-group "${ROOT}" "dist/${PKG}_${VER}_amd64.deb"
           echo "deb_path=practica5/dist/${PKG}_${VER}_amd64.deb" >> $GITHUB_OUTPUT
-
       - name: Upload .deb to Nexus (APT deploy)
         run: |
           set -euo pipefail
           DEB=$(basename "${{ steps.pack.outputs.deb_path }}")
-          URL="http://${{ secrets.NEXUS_HOST }}:8081/repository/syspulse/deb/binary/${{ env.APT_DIST }}/${{ env.APT_COMPONENT }}/syspulse/binary/amd64/${DEB}"
+          # La URL para APT hosted es simplemente la raíz del repositorio
+          URL="http://${{ secrets.NEXUS_HOST }}:8081/repository/syspulse/"
           curl --fail --silent --show-error \
             --user "${{ secrets.NEXUS_USER }}:${{ secrets.NEXUS_PASSWORD }}" \
-            -H "Content-Type: application/vnd.debian.binary-package" \
-            --upload-file "${{ steps.pack.outputs.deb_path }}" \
+            -H "Content-Type: multipart/form-data" \
+            --data-binary "@${{ steps.pack.outputs.deb_path }}" \
             "${URL}"
           echo "Package ${DEB} deployed to Nexus."
 
