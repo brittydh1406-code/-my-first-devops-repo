@@ -37,6 +37,26 @@ jobs:
 
       - name: Run pgloader Migration
         if: steps.check_status.outputs.already_migrated == 'false'
+
+      - name: Run pgloader Migration
+        if: steps.check_status.outputs.already_migrated == 'false'
+        run: |
+          cat > migration.load << LOADEOF
+          LOAD DATABASE
+            FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
+            INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@localhost:5432/mattermost
+          WITH include drop, create tables, create indexes, reset sequences,
+               workers = 4, concurrency = 1
+          SET maintenance_work_mem to '128MB',
+              work_mem to '12MB';
+          LOADEOF
+          # Aquí está la magia: le decimos al contenedor que comparta la red de Postgres
+          docker run --rm \
+            --network container:mattermost-postgres \
+            -v "$(pwd)/migration.load:/migration.load" \
+            mattermost/mattermost-pgloader:latest \
+            pgloader /migration.load
+
         run: |
           cat > migration.load << LOADEOF
           LOAD DATABASE
@@ -55,7 +75,6 @@ jobs:
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
           touch $HOME/.mattermost_migration_completed
-
       - name: Stop Legacy Stack
         run: docker compose -f legacy/docker-compose.yml down
 
