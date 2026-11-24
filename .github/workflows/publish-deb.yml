@@ -66,17 +66,16 @@ jobs:
             "${URL}"
           echo "Package ${DEB} deployed to Nexus."
 
+
       - name: Verify install via apt in Ubuntu container
         run: |
           set -euo pipefail
-          # Obtenemos la IP del host para que el contenedor pueda ver Nexus
-          HOST_IP=$(ip route | awk '/default/ {print $3}')
-          echo "Host IP: $HOST_IP"
-          docker run --rm ubuntu:22.04 bash -c "
+          echo "Installing syspulse from Nexus inside a clean ubuntu:22.04..."
+          docker run --rm --network host ubuntu:22.04 bash -c "
             set -euo pipefail
             apt-get update -y
             apt-get install -y --no-install-recommends ca-certificates curl
-            echo 'deb [trusted=yes] http://${HOST_IP}:8081/repository/syspulse/ ${{ env.APT_DIST }} ${{ env.APT_COMPONENT }}' > /etc/apt/sources.list.d/syspulse.list
+            echo 'deb [trusted=yes] http://localhost:8081/repository/syspulse/ ${{ env.APT_DIST }} ${{ env.APT_COMPONENT }}' > /etc/apt/sources.list.d/syspulse.list
             apt-get update
             apt-get install -y syspulse
             echo '--- package info ---'
@@ -85,6 +84,7 @@ jobs:
             syspulse --version
             syspulse
           "
+          echo "Verification passed: syspulse installed from Nexus and runs correctly."
 
       - name: Save .deb as artifact
         if: always()
