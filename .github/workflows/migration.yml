@@ -44,24 +44,29 @@ jobs:
         run: |
           docker compose -f ${{ env.COMPOSE_FILE }} up -d mattermost-postgres
           echo "Waiting for PostgreSQL to initialize..."
+
       - name: Run pgloader Migration
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          echo "
-          LOAD DATABASE
-            FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
-            INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@localhost:5432/mattermost
-          WITH include drop, create tables, create indexes, reset sequences,
-               workers = 4, concurrency = 1
-          SET maintenance_work_mem to '128MB',
-              work_mem to '12MB';
-          " > migration.load
+          # Obtenemos la IP de la red a la que pertenece MySQL (la red mattermost_network)
+          MYSQL_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' mattermost-mysql)
+          echo "La IP de MySQL es: $MYSQL_IP"
 
+          # Creamos el archivo usando printf para evitar problemas con los saltos de línea
+          printf "LOAD DATABASE\n" > migration.load
+          printf "  FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@%s:3306/mattermost\n" "$MYSQL_IP" >> migration.load
+          printf "  INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@localhost:5432/mattermost\n" >> migration.load
+          printf "WITH include drop, create tables, create indexes, reset sequences,\n" >> migration.load
+          printf "     workers = 4, concurrency = 1\n" >> migration.load
+          printf "SET maintenance_work_mem to '128MB',\n" >> migration.load
+          printf "    work_mem to '12MB';\n" >> migration.load
+
+          # Ejecutamos pgloader
           docker run --rm \
             --network container:mattermost-postgres \
             -v "$(pwd)/migration.load:/migration.load" \
             mattermost/mattermost-pgloader:latest \
-            pgloader /migration.load          sleep 10
+            pgloader /migration.load
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
