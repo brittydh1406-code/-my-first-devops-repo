@@ -15,7 +15,7 @@ services:
     networks:
       - mattermost_network
     depends_on:
-      - db-postgres
+      - mattermost-postgres
     restart: unless-stopped
 
   mattermost-postgres:
