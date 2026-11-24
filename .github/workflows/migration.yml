@@ -1,9 +1,11 @@
 name: Idempotent Mattermost Migration & Upgrade
-
 on:
   push:
     branches: [ "migration" ]
   workflow_dispatch:
+
+env:
+  COMPOSE_FILE: docker-compose.prod.yml
 
 jobs:
   migrate-and-deploy:
@@ -17,31 +19,35 @@ jobs:
         id: check_status
         run: |
           if [ -f "$HOME/.mattermost_migration_completed" ]; then
-            echo "Database already migrated. Skipping."
+            echo "✓ Database already migrated to PostgreSQL. Skipping data transfer."
             echo "already_migrated=true" >> $GITHUB_OUTPUT
           else
-            echo "Migration required."
+            echo "⚠ Migration required."
             echo "already_migrated=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Backup Legacy MySQL
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          docker exec mattermost-mysql mysqldump -u root -p"${{ secrets.DB_MYSQL_ROOT_PASSWORD }}" mattermost > mattermost_mysql_backup_${{ github.run_id }}.sql
+          echo "Creating timestamped backup of MySQL..."
+          BACKUP_NAME="mattermost_mysql_backup_${{ github.run_id }}.sql"
+          if docker ps | grep -q "mattermost-mysql"; then
+            docker exec mattermost-mysql mysqldump -u root -p${{ secrets.DB_MYSQL_ROOT_PASSWORD }} mattermost > $BACKUP_NAME
+            echo "Backup successfully saved as ${BACKUP_NAME}"
+          else
+            echo "Error: Legacy MySQL container is not running!"
+            exit 1
+          fi
 
       - name: Start Target PostgreSQL
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          docker compose -f docker-compose.prod.yml up -d mattermost-postgres
-          sleep 15
-
-      - name: Run pgloader Migration
-        if: steps.check_status.outputs.already_migrated == 'false'
-
+          docker compose -f ${{ env.COMPOSE_FILE }} up -d mattermost-postgres
+          echo "Waiting for PostgreSQL to initialize..."
       - name: Run pgloader Migration
         if: steps.check_status.outputs.already_migrated == 'false'
         run: |
-          cat > migration.load << LOADEOF
+          echo "
           LOAD DATABASE
             FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
             INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@localhost:5432/mattermost
@@ -49,43 +55,32 @@ jobs:
                workers = 4, concurrency = 1
           SET maintenance_work_mem to '128MB',
               work_mem to '12MB';
-          LOADEOF
-          # Aquí está la magia: le decimos al contenedor que comparta la red de Postgres
+          " > migration.load
+
           docker run --rm \
             --network container:mattermost-postgres \
             -v "$(pwd)/migration.load:/migration.load" \
             mattermost/mattermost-pgloader:latest \
-            pgloader /migration.load
-
-        run: |
-          cat > migration.load << LOADEOF
-          LOAD DATABASE
-            FROM mysql://root:${{ secrets.DB_MYSQL_ROOT_PASSWORD }}@mattermost-mysql:3306/mattermost
-            INTO postgresql://mmuser:${{ secrets.DB_POSTGRES_PASSWORD }}@mattermost-postgres:5432/mattermost
-          WITH include drop, create tables, create indexes, reset sequences,
-               workers = 4, concurrency = 1
-          SET maintenance_work_mem to '128MB',
-              work_mem to '12MB';
-          LOADEOF
-
-          # Usamos la red mattermost_net que definimos en los compose
-          docker run --rm --network mattermost_net -v $(pwd)/migration.load:/migration.load mattermost/mattermost-pgloader:latest pgloader /migration.load
+            pgloader /migration.load          sleep 10
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
-        run: |
-          touch $HOME/.mattermost_migration_completed
-      - name: Stop Legacy Stack
-        run: docker compose -f legacy/docker-compose.yml down
+        run: touch $HOME/.mattermost_migration_completed
 
       - name: Deploy Upgraded Stack
-        run: docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-      - name: Run Health Checks
         run: |
-          sleep 20
+          echo "Launching Upgraded Mattermost Stack..."
+          docker compose -f ${{ env.COMPOSE_FILE }} up -d --remove-orphans
+          echo "Waiting for Mattermost to apply internal database updates..."
+          sleep 30
+
+      - name: Run Health Checks & Verify Data
+        run: |
+          echo "Running Smoke Tests..."
           if curl -f http://localhost:8065/api/v4/system/ping; then
-            echo "✅ Mattermost upgraded successfully and running on Postgres!"
+            echo "✓ Mattermost upgraded successfully and running on Postgres!"
           else
+            echo "Application health check failed. Fetching logs..."
+            docker compose -f ${{ env.COMPOSE_FILE }} logs
             exit 1
           fi
