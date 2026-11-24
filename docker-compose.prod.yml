@@ -18,7 +18,7 @@ services:
       - db-postgres
     restart: unless-stopped
 
-  db-postgres:
+  mattermost-postgres:
     image: postgres:15-alpine
     container_name: mattermost-postgres
     environment:
