@@ -1,0 +1,5 @@
+LOAD DATABASE
+  FROM mysql://root:Mysql_Seguro_2024!@mattermost-mysql:3306/mattermost
+  INTO postgresql://mmuser:Postgres_Seguro_2024!@mattermost-postgres:5432/mattermost
+WITH include drop, create tables, create indexes, reset sequences
+  INCLUDING ONLY TABLE NAMES MATCHING 'users';

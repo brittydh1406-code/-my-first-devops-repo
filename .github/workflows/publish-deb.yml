@@ -1,0 +1,95 @@
+name: Build & Publish syspulse .deb to Nexus (APT)
+on:
+  push:
+    branches: ["release"]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: "1.21"
+  APT_DIST: stable
+  APT_COMPONENT: main
+
+jobs:
+  build-publish-verify:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build static Linux binary
+        run: |
+          cd practica5
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dist/syspulse .
+          echo "Binary built: $(ls -lh dist/syspulse)"
+
+      - name: Package as .deb
+        id: pack
+        run: |
+          cd practica5
+          PKG=syspulse
+          VER=$(grep -oP 'const Version = "\K[0-9.]+' main.go)
+          echo "Building package ${PKG} version ${VER}"
+          echo "pkg_ver=${VER}" >> $GITHUB_OUTPUT
+          ROOT=build/${PKG}_${VER}
+          mkdir -p "${ROOT}/DEBIAN" "${ROOT}/usr/bin"
+          cp dist/syspulse "${ROOT}/usr/bin/${PKG}"
+          chmod 755 "${ROOT}/usr/bin/${PKG}"
+          cat > "${ROOT}/DEBIAN/control" <<EOF
+          Package: ${PKG}
+          Version: ${VER}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: DevOps Team <devops@example.com>
+          Description: Lightweight CLI tool for a system health snapshot
+           Reads /proc and reports uptime, load average and memory info.
+          Depends: libc6 (>= 2.17)
+          EOF
+          dpkg-deb --build --root-owner-group "${ROOT}" "dist/${PKG}_${VER}_amd64.deb"
+          echo "deb_path=practica5/dist/${PKG}_${VER}_amd64.deb" >> $GITHUB_OUTPUT
+
+      - name: Upload .deb to Nexus (APT deploy)
+        run: |
+          set -euo pipefail
+          DEB=$(basename "${{ steps.pack.outputs.deb_path }}")
+          URL="http://${{ secrets.NEXUS_HOST }}:8081/repository/syspulse/deb/binary/${{ env.APT_DIST }}/${{ env.APT_COMPONENT }}/syspulse/binary/amd64/${DEB}"
+          curl --fail --silent --show-error \
+            --user "${{ secrets.NEXUS_USER }}:${{ secrets.NEXUS_PASSWORD }}" \
+            -H "Content-Type: application/vnd.debian.binary-package" \
+            --upload-file "${{ steps.pack.outputs.deb_path }}" \
+            "${URL}"
+          echo "Package ${DEB} deployed to Nexus."
+
+      - name: Verify install via apt in Ubuntu container
+        run: |
+          set -euo pipefail
+          # Obtenemos la IP del host para que el contenedor pueda ver Nexus
+          HOST_IP=$(ip route | awk '/default/ {print $3}')
+          echo "Host IP: $HOST_IP"
+          docker run --rm ubuntu:22.04 bash -c "
+            set -euo pipefail
+            apt-get update -y
+            apt-get install -y --no-install-recommends ca-certificates curl
+            echo 'deb [trusted=yes] http://${HOST_IP}:8081/repository/syspulse/ ${{ env.APT_DIST }} ${{ env.APT_COMPONENT }}' > /etc/apt/sources.list.d/syspulse.list
+            apt-get update
+            apt-get install -y syspulse
+            echo '--- package info ---'
+            dpkg -s syspulse | grep -E '^(Package|Version|Architecture)'
+            echo '--- run app ---'
+            syspulse --version
+            syspulse
+          "
+
+      - name: Save .deb as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: syspulse-deb
+          path: practica5/dist/*.deb
+          retention-days: 7
